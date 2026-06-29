@@ -1,4 +1,5 @@
-import streamlit as st
+import gradio as io_gradio  # İsmi çakışmasın diye io_gradio yaptık
+import gradio as gr
 import pandas as pd
 import os
 import io
@@ -7,71 +8,37 @@ import time
 from pathlib import Path
 from PIL import Image, ImageDraw
 
-# --- Gelişmiş Paket İthalat Korumaları ---
-missing_packages = []
+# --- Global Değişkenler ---
+GEMINI_KEY = ""
 
-try:
-    import google.generativeai as genai
-except ImportError:
-    genai = None
-    missing_packages.append("google-generativeai")
-
-try:
-    from rembg import remove as rembg_remove
-except ImportError:
-    rembg_remove = None
-    missing_packages.append("rembg")
-
-try:
-    import plotly.express as px
-except ImportError:
-    px = None
-    missing_packages.append("plotly")
-
-try:
-    from pypdf import PdfReader
-except ImportError:
-    PdfReader = None
-    missing_packages.append("pypdf")
-
-# --- Sayfa Konfigürasyonu ---
-st.set_page_config(page_title="VW Classic Club PIM Holding", layout="wide", page_icon="🏎️")
-
-# --- Durum Korumaları İçin Global Değişkenleri Başlatma ---
-if "output" not in st.session_state:
-    st.session_state.output = {"instagram": "", "email": "", "blog_yazisi": "", "ai_gorsel_bytes": None}
-if "gemini_rapor" not in st.session_state:
-    st.session_state.gemini_rapor = "Sistem optimize edildi. Sorgu bekleniyor..."
-
-# --- Yararlı Fonksiyonlar ---
-def ensure_str(value):
-    if pd.isna(value) or value is None:
-        return ""
-    return str(value)
+def set_api_key(key):
+    global GEMINI_KEY
+    GEMINI_KEY = key
+    return "✅ Gemini API Anahtarı Sisteme Tanımlandı!"
 
 def get_shopify_cdn_url(resim_ismi):
     if not resim_ismi:
         return ""
     temiz_resim_ismi = str(resim_ismi).strip().replace(" ", "-").lower()
     versiyon = int(time.time())
-    base_url = "https://cdn.shopify.com/s/files/1/0732/9638/0065/files/"
-    return f"{base_url}{temiz_resim_ismi}?v={versiyon}"
+    return f"https://cdn.shopify.com/s/files/1/0732/9638/0065/files/{temiz_resim_ismi}?v={versiyon}"
 
+# --- CORE ENGINE: Hızlı Resim Beyazlatma ---
 def url_resmini_beyazlat_ve_kaydet(image_url, orijinal_isim, save_folder="Islem_Goren_Resimler"):
     if not image_url or not orijinal_isim:
         return None, "URL veya İsim eksik"
-        
     try:
-        response = requests.get(image_url, timeout=15)
+        response = requests.get(image_url, timeout=10)
         response.raise_for_status()
         
         img = Image.open(io.BytesIO(response.content)).convert("RGBA")
         
-        # Eğer rembg bulutta tam kurulmadıysa hata verip çökmesin, pas geçsin
-        if rembg_remove is not None:
+        # Otonom Arka Plan Silme (Gradio Sunucusunda Doğrudan Çalışır)
+        try:
+            from rembg import remove as rembg_remove
             no_bg_img = rembg_remove(img)
-        else:
-            return None, "Bulutta Rembg modülü henüz hazır değil. Lütfen az sonra tekrar deneyin."
+        except ImportError:
+            return None, "Rembg yükleniyor..."
             
         white_bg = Image.new("RGBA", no_bg_img.size, (255, 255, 255, 255))
         white_bg.paste(no_bg_img, (0, 0), no_bg_img)
@@ -82,118 +49,88 @@ def url_resmini_beyazlat_ve_kaydet(image_url, orijinal_isim, save_folder="Islem_
         kayit_formati = "JPEG" if orijinal_isim.lower().endswith(('.jpg', '.jpeg')) else "PNG"
         final_img.save(save_path, format=kayit_formati)
         
-        return save_path, "Başarılı"
+        return final_img, "Başarılı"
     except Exception as e:
         return None, f"Hata: {str(e)}"
 
-# --- SIDEBAR: Holding Yönetim Merkezi ---
-st.sidebar.title("🛠️ Holding Yönetim Merkezi")
-
-if missing_packages:
-    st.sidebar.warning(f"⚠️ Yüklenen Paketler: {', '.join(missing_packages)}")
-
-st.sidebar.subheader("🔑 API & Bulut Kimlikleri")
-gemini_key = st.sidebar.text_input("Google Gemini API Key", type="password")
-project_name = st.sidebar.text_input("GCP Proje Adı", value="VW-PIM-Sistem")
-
-if st.sidebar.button("API Bağlantısını Sına"):
-    if not gemini_key or not genai:
-        st.sidebar.error("Eksik API Anahtarı veya Kütüphane.")
-    else:
-        try:
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            res = model.generate_content("Bağlantı testi.")
-            st.sidebar.success("Bağlantı Başarılı! Sistem Çevrimiçi.")
-        except Exception as e:
-            st.sidebar.error(f"Hata: {str(e)}")
-
-# --- 4 ANA SEKME MİMARİSİ ---
-tab1, tab2, tab3, tab4 = st.tabs([
-    "🖥️ Canlı Simülatör", 
-    "📦 Akıllı Katalog", 
-    "📸 AI Medya Stüdyosu", 
-    "📢 AI Pazarlama"
-])
-
-# TAB 1: CANLI SİMÜLATÖR
-with tab1:
-    st.header("🖥️ Canlı Simülatör & İş Analitiği")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("🔍 Tekli Ürün Fiyat Radarı")
-        urun_adi = st.text_input("Ürün Adı", value="Vosvos Distribütör Kapağı")
-        sku_kodu = st.text_input("Ticimax SKU Kodu", value="4-4158")
-        if st.button("Piyasa Fiyatını Tara"):
-            st.success(f"{urun_adi} (SKU: {sku_kodu}) için analiz simüle edildi.")
-            
-    with col2:
-        st.subheader("📈 Mağaza Kar/Zarar Dashboard")
-        if px is not None:
-            demo_data = pd.DataFrame({"Marka": ["Bosch", "Ate", "Sachs", "Meyle"], "Kar_Marji": [2500, 1800, 1400, 950]})
-            fig = px.bar(demo_data, x="Marka", y="Kar_Marji", title="Karlılık Dağılımı", template="plotly_dark")
-            st.plotly_chart(fig, use_container_width=True)
-
-# TAB 2: AKILLI KATALOG
-with tab2:
-    st.header("📦 Akıllı Katalog & Pazaryeri Entegrasyonu")
-    st.subheader("📄 Toplu Excel İşleme & CDN Linkleme")
-    uploaded_excel = st.file_uploader("Ham Ticimax Excel Dosyası Yükle", type=["xlsx", "xls"])
-    
-    if st.button("Kataloğu İşle ve Shopify CDN ile Bağla"):
-        if uploaded_excel:
-            try:
-                df = pd.read_excel(uploaded_excel)
-                if "URUNADI" in df.columns and "STOKKODU" in df.columns:
-                    for index, row in df.iterrows():
-                        stok = ensure_str(row["STOKKODU"]).strip()
-                        seo_resim_adi = f"{index+1}-{stok}-vw-classic-club.jpg"
-                        df.at[index, "RESIM1"] = get_shopify_cdn_url(seo_resim_adi)
-                st.success("Katalog Shopify formatında işlendi! 🏁")
-                buffer = io.BytesIO()
-                df.to_excel(buffer, index=False, engine="openpyxl")
-                st.download_button("İşlenmiş Excel'i İndir", data=buffer.getvalue(), file_name="islenmis_katalog.xlsx")
-            except Exception as e:
-                st.error(f"Hata: {str(e)}")
-
-# TAB 3: AI MEDYA STÜDYOSU (Otonom Resim Beyazlatma)
-with tab3:
-    st.header("📸 AI Medya Stüdyosu & İşlem Merkezi")
-    st.subheader("🔗 URL'den Otonom Beyazlatma Motoru")
-    url_excel = st.file_uploader("İçinde URL ve Orijinal Resim İsimleri Olan Excel Yükle", type=["xlsx", "xls"], key="url_beyaz")
-    
-    if url_excel:
-        url_df = pd.read_excel(url_excel)
-        col_url = st.selectbox("Resim Linklerinin Olduğu Sütun (URL)", url_df.columns)
-        col_isim = st.selectbox("Orijinal Resim İsimlerinin Olduğu Sütun", url_df.columns)
+# --- TAB 2: Katalog İşleme Fonksiyonu ---
+def katalog_isle(file):
+    if file is None:
+        return None, "Lütfen Excel Dosyası Yükleyin."
+    try:
+        df = pd.read_excel(file.name)
+        if "URUNADI" in df.columns and "STOKKODU" in df.columns:
+            for index, row in df.iterrows():
+                stok = str(row["STOKKODU"]).strip()
+                seo_resim_adi = f"{index+1}-{stok}-vw-classic-club.jpg"
+                df.at[index, "RESIM1"] = get_shopify_cdn_url(seo_resim_adi)
         
-        if st.button("Tüm Linklere Sız ve Resimleri Beyazlat"):
-            with st.spinner("İnternetten resimler dekupe ediliyor..."):
-                basarili, hatali = 0, 0
-                for index, row in url_df.iterrows():
-                    aktif_url = ensure_str(row[col_url]).strip()
-                    aktif_isim = ensure_str(row[col_isim]).strip()
-                    if aktif_url and aktif_isim:
-                        kayit_yolu, durum = url_resmini_beyazlat_ve_kaydet(aktif_url, aktif_isim)
-                        if kayit_yolu:
-                            basarili += 1
-                        else:
-                            hatali += 1
-                st.success(f"🏁 İşlem Tamamlandı! {basarili} resim stüdyo beyazına alındı. ({hatali} Hata)")
+        out_path = "islenmis_katalog.xlsx"
+        df.to_excel(out_path, index=False, engine="openpyxl")
+        return out_path, "✅ Katalog Başarıyla İşlendi ve Shopify CDN Linkleri Gömüldü!"
+    except Exception as e:
+        return None, f"Hata: {str(e)}"
 
-# TAB 4: AI PAZARLAMA
-with tab4:
-    st.header("📢 AI Pazarlama & SEO Blog Fabrikası")
-    paz_urun = st.text_input("Sosyal Medya Başlığı", value="Bosch Orijinal Dağıtıcı")
-    if st.button("Instagram Postu Üret"):
-        if not gemini_key:
-            st.error("API Anahtarı eksik.")
-        else:
-            try:
-                genai.configure(api_key=gemini_key)
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                res = model.generate_content(f"{paz_urun} ürünü için Instagram postu yaz.")
-                st.session_state.output["instagram"] = res.text
-            except Exception as e:
-                st.error(f"Hata: {str(e)}")
-    st.write(st.session_state.output.get("instagram", ""))
+# --- TAB 3: Toplu URL Beyazlatma Fonksiyonu ---
+def toplu_url_beyazlat(file, url_col, name_col):
+    if file is None:
+        return None, "Lütfen Excel Yükleyin."
+    try:
+        df = pd.read_excel(file.name)
+        basarili_resimler = []
+        for index, row in df.iterrows():
+            url = str(row[url_col]).strip()
+            name = str(row[name_col]).strip()
+            if url and name:
+                img, durum = url_resmini_beyazlat_ve_kaydet(url, name)
+                if img:
+                    basarili_resimler.append(img)
+        
+        if basarili_resimler:
+            return basarili_resimler[0], f"📊 İşlem Tamamlandı! {len(basarili_resimler)} adet resim dekupe edilip beyaz fona alındı."
+        return None, "İşlenecek geçerli resim bulunamadı."
+    except Exception as e:
+        return None, f"Hata: {str(e)}"
+
+# --- GRADIO ARAYÜZ TASARIMI (IŞIK HIZI TEMASI) ---
+with gr.Blocks(theme=gr.themes.Soft(primary_hue="red", secondary_hue="slate")) as demo:
+    gr.Markdown("# 🏎️ VW Classic Club PIM Holding - Gradio Ultimate Engine")
+    
+    with gr.Row():
+        api_box = gr.Textbox(label="Google Gemini API Key", type="password", placeholder="AI özelliklerini tetiklemek için girin...")
+        btn_api = gr.Button("🔑 Anahtarı Tanımla", variant="primary")
+        api_status = gr.Markdown("*Sistem API bekliyor...*")
+    
+    btn_api.click(set_api_key, inputs=[api_box], outputs=[api_status])
+    
+    with gr.Tabs():
+        # TAB 1: CANLI SİMÜLATÖR
+        with gr.TabItem("🖥️ Canlı Simülatör"):
+            gr.Markdown("### 🔍 Tekli Ürün Fiyat Radarı")
+            u_name = gr.Textbox(label="Ürün Adı", value="Vosvos Distribütör Kapağı")
+            u_sku = gr.Textbox(label="Ticimax SKU Kodu", value="4-4158")
+            btn_radar = gr.Button("Piyasa Fiyatını Tara")
+            radar_out = gr.Markdown()
+            btn_radar.click(lambda name, sku: f"⚡ `{name}` (SKU: {sku}) için anlık internet fiyat analizi simüle edildi. Sistem stabil.", inputs=[u_name, u_sku], outputs=[radar_out])
+
+        # TAB 2: AKILLI KATALOG
+        with gr.TabItem("📦 Akıllı Katalog & CDN"):
+            gr.Markdown("### 📄 Toplu Excel İşleme & Shopify CDN Linkleme")
+            excel_in = gr.File(label="Ham Ticimax Excel Dosyası Yükle", file_types=[".xlsx", ".xls"])
+            btn_kat = gr.Button("Kataloğu İşle ve CDN Düzenle", variant="primary")
+            excel_out = gr.File(label="İşlenmiş Excel'i İndir")
+            kat_status = gr.Markdown()
+            btn_kat.click(katalog_isle, inputs=[excel_in], outputs=[excel_out, kat_status])
+
+        # TAB 3: AI MEDYA STÜDYOSU (OTONOM URL BEYAZLATICI)
+        with gr.TabItem("📸 AI Medya Stüdyosu"):
+            gr.Markdown("### 🔗 URL'den Otonom Beyazlatma Motoru")
+            url_excel_in = gr.File(label="İçinde URL ve Resim İsimleri Olan Excel Yükle", file_types=[".xlsx"])
+            col_url_txt = gr.Textbox(label="URL Sütun Adı", value="URL")
+            col_name_txt = gr.Textbox(label="Orijinal Resim İsmi Sütun Adı", value="ResimAdi")
+            btn_beyaz = gr.Button("Tüm Linklere Sız ve Resimleri Beyazlat", variant="primary")
+            img_preview = gr.Image(label="Son İşlenen Resim Önizleme")
+            beyaz_status = gr.Markdown()
+            btn_beyaz.click(toplu_url_beyazlat, inputs=[url_excel_in, col_url_txt, col_name_txt], outputs=[img_preview, beyaz_status])
+
+demo.launch()
