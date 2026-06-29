@@ -1,0 +1,8 @@
+gradio
+pandas
+openpyxl
+xlrd
+pypdf
+google-generativeai
+python-dotenv
+requests
