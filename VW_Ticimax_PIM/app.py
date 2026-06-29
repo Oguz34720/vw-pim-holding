@@ -1,5 +1,4 @@
-import gradio as io_gradio  # İsmi çakışmasın diye io_gradio yaptık
-import gradio as gr
+import gradio as gr  # pyright: ignore[reportMissingImports]
 import pandas as pd
 import os
 import io
@@ -7,6 +6,33 @@ import requests
 import time
 from pathlib import Path
 from PIL import Image, ImageDraw
+
+# --- Gelişmiş Paket İthalat Korumaları & Susturucular ---
+missing_packages = []
+
+try:
+    import google.generativeai as genai  # pyright: ignore[reportMissingImports]
+except ImportError:
+    genai = None
+    missing_packages.append("google-generativeai")
+
+try:
+    from rembg import remove as rembg_remove  # pyright: ignore[reportMissingImports]
+except ImportError:
+    rembg_remove = None
+    missing_packages.append("rembg")
+
+try:
+    import plotly.express as px  # pyright: ignore[reportMissingImports]
+except ImportError:
+    px = None
+    missing_packages.append("plotly")
+
+try:
+    from pypdf import PdfReader  # pyright: ignore[reportMissingImports]
+except ImportError:
+    PdfReader = None
+    missing_packages.append("pypdf")
 
 # --- Global Değişkenler ---
 GEMINI_KEY = ""
@@ -33,11 +59,9 @@ def url_resmini_beyazlat_ve_kaydet(image_url, orijinal_isim, save_folder="Islem_
         
         img = Image.open(io.BytesIO(response.content)).convert("RGBA")
         
-        # Otonom Arka Plan Silme (Gradio Sunucusunda Doğrudan Çalışır)
-        try:
-            from rembg import remove as rembg_remove
+        if rembg_remove is not None:
             no_bg_img = rembg_remove(img)
-        except ImportError:
+        else:
             return None, "Rembg yükleniyor..."
             
         white_bg = Image.new("RGBA", no_bg_img.size, (255, 255, 255, 255))
@@ -53,7 +77,7 @@ def url_resmini_beyazlat_ve_kaydet(image_url, orijinal_isim, save_folder="Islem_
     except Exception as e:
         return None, f"Hata: {str(e)}"
 
-# --- TAB 2: Katalog İşleme Fonksiyonu ---
+# --- Katalog İşleme Fonksiyonu ---
 def katalog_isle(file):
     if file is None:
         return None, "Lütfen Excel Dosyası Yükleyin."
@@ -71,7 +95,7 @@ def katalog_isle(file):
     except Exception as e:
         return None, f"Hata: {str(e)}"
 
-# --- TAB 3: Toplu URL Beyazlatma Fonksiyonu ---
+# --- Toplu URL Beyazlatma Fonksiyonu ---
 def toplu_url_beyazlat(file, url_col, name_col):
     if file is None:
         return None, "Lütfen Excel Yükleyin."
@@ -92,7 +116,7 @@ def toplu_url_beyazlat(file, url_col, name_col):
     except Exception as e:
         return None, f"Hata: {str(e)}"
 
-# --- GRADIO ARAYÜZ TASARIMI (IŞIK HIZI TEMASI) ---
+# --- GRADIO ARAYÜZ TASARIMI ---
 with gr.Blocks(theme=gr.themes.Soft(primary_hue="red", secondary_hue="slate")) as demo:
     gr.Markdown("# 🏎️ VW Classic Club PIM Holding - Gradio Ultimate Engine")
     
@@ -104,7 +128,6 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="red", secondary_hue="slate")) a
     btn_api.click(set_api_key, inputs=[api_box], outputs=[api_status])
     
     with gr.Tabs():
-        # TAB 1: CANLI SİMÜLATÖR
         with gr.TabItem("🖥️ Canlı Simülatör"):
             gr.Markdown("### 🔍 Tekli Ürün Fiyat Radarı")
             u_name = gr.Textbox(label="Ürün Adı", value="Vosvos Distribütör Kapağı")
@@ -113,7 +136,6 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="red", secondary_hue="slate")) a
             radar_out = gr.Markdown()
             btn_radar.click(lambda name, sku: f"⚡ `{name}` (SKU: {sku}) için anlık internet fiyat analizi simüle edildi. Sistem stabil.", inputs=[u_name, u_sku], outputs=[radar_out])
 
-        # TAB 2: AKILLI KATALOG
         with gr.TabItem("📦 Akıllı Katalog & CDN"):
             gr.Markdown("### 📄 Toplu Excel İşleme & Shopify CDN Linkleme")
             excel_in = gr.File(label="Ham Ticimax Excel Dosyası Yükle", file_types=[".xlsx", ".xls"])
@@ -122,7 +144,6 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="red", secondary_hue="slate")) a
             kat_status = gr.Markdown()
             btn_kat.click(katalog_isle, inputs=[excel_in], outputs=[excel_out, kat_status])
 
-        # TAB 3: AI MEDYA STÜDYOSU (OTONOM URL BEYAZLATICI)
         with gr.TabItem("📸 AI Medya Stüdyosu"):
             gr.Markdown("### 🔗 URL'den Otonom Beyazlatma Motoru")
             url_excel_in = gr.File(label="İçinde URL ve Resim İsimleri Olan Excel Yükle", file_types=[".xlsx"])
